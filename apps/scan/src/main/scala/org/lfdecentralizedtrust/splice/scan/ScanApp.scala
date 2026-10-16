@@ -76,7 +76,9 @@ import org.lfdecentralizedtrust.splice.scan.store.{
   ScanRewardsReferenceStore,
   ScanStore,
 }
+import org.lfdecentralizedtrust.splice.PekkoRetryingService
 import org.lfdecentralizedtrust.splice.scan.store.bulk.BulkStorage
+import org.lfdecentralizedtrust.splice.scan.store.votesbackfilling.VotesStoreBackfilling
 import org.lfdecentralizedtrust.splice.scan.store.historystart.{
   KvHistoryStartStore,
   ParticipantHistoryStartSources,
@@ -90,6 +92,7 @@ import org.lfdecentralizedtrust.splice.scan.store.db.{
   DbVotesStore,
 }
 import org.lfdecentralizedtrust.splice.store.db.{DbAppStore, InternedStringStore}
+import org.lfdecentralizedtrust.splice.store.db.TxLogQueries.TxLogStoreId
 import org.lfdecentralizedtrust.splice.store.{
   ChoiceContextContractFetcher,
   PageLimit,
@@ -246,6 +249,34 @@ class ScanApp(
         loggerFactory,
         enableImportUpdateBackfill = config.updateHistoryBackfillImportUpdatesEnabled,
         scanAppMetrics.dbScanStore.history,
+      )
+      historicalVotesStore = DbVotesStore(
+        TxLogStoreId.unwrap(store.txLogStoreId),
+        storage,
+        kvStore,
+        loggerFactory,
+      )
+      votesStoreBackfilling = Option.when(config.votesStoreBackfillingEnabled) {
+        new VotesStoreBackfilling(
+          config.votesStoreBackfillingPollingInterval,
+          config.votesStoreBackfillingPageSize,
+          store,
+          historicalVotesStore,
+          svName,
+          ledgerClient,
+          config.automation,
+          amuletAppParameters.upgradesConfig,
+          new WallClock(retryProvider.timeouts, loggerFactory),
+          retryProvider,
+          loggerFactory,
+        )
+      }
+      votesStoreBackfillingService = votesStoreBackfilling.map(
+        _.asPekkoRetryingService(
+          config.automation,
+          new WallClock(retryProvider.timeouts, loggerFactory),
+          retryProvider,
+        )
       )
       acsSnapshotStore = AcsSnapshotStore(
         storage,
@@ -581,6 +612,8 @@ class ScanApp(
         store,
         automation,
         bulkStorage,
+        historicalVotesStore,
+        votesStoreBackfillingService,
         historyStart,
         verdictAutomation,
         scanEventStore,
@@ -656,6 +689,8 @@ object ScanApp {
       store: ScanStore,
       automation: ScanAutomationService,
       bulkStorage: Option[BulkStorage],
+      votesStore: DbVotesStore,
+      votesStoreBackfillingService: Option[PekkoRetryingService[VotesStoreBackfilling.Step]],
       historyStart: ScanHistoryStart,
       verdictAutomation: ScanVerdictAutomationService,
       eventStore: ScanEventStore,
@@ -676,6 +711,7 @@ object ScanApp {
         bftSequencersAdminConnections ++
           cleanups ++
           bulkStorage.toList ++
+          votesStoreBackfillingService.toList ++
           Seq(
             automation,
             verdictAutomation,
