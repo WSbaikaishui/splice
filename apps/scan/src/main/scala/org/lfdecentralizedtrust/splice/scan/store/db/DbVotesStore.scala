@@ -171,7 +171,7 @@ class DbVotesStore private (
     */
   def listBackfillPage(
       before: VotesBackfillCursor,
-      limit: Int,
+      limit: PageLimit,
   )(implicit tc: TraceContext): Future[Seq[PeerVoteResult]] =
     storage.query(
       sql"""select record_time, synchronizer_id, update_id, event_number, vote_action_name,
@@ -181,7 +181,7 @@ class DbVotesStore private (
             where store_id = $storeId
               and (record_time, event_number) < (${before.recordTime.toMicros}, ${before.eventNumber})
             order by record_time desc, event_number desc
-            limit $limit""".as[PeerVoteResult],
+            limit ${sqlLimit(limit)}""".as[PeerVoteResult],
       "DbVotesStore.listBackfillPage",
     )
 

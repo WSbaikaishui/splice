@@ -583,7 +583,7 @@ class DbVotesStoreTest
           _ <- ingestAll(stores, voteFixtures)
           page <- stores.votesStore.listBackfillPage(
             DbVotesStore.VotesBackfillCursor(CantonTimestamp.MinValue, 0),
-            1000,
+            PageLimit.Max,
           )
         } yield page shouldBe empty
       }
@@ -895,7 +895,7 @@ class DbVotesStoreTest
         before: DbVotesStore.VotesBackfillCursor,
         acc: Seq[DbVotesStore.PeerVoteResult],
     ): Future[Seq[DbVotesStore.PeerVoteResult]] =
-      votesStore.listBackfillPage(before, pageSize).flatMap {
+      votesStore.listBackfillPage(before, PageLimit.tryCreate(pageSize)).flatMap {
         case Seq() => Future.successful(acc)
         case page =>
           val oldest = page.minBy(row => (row.recordTime, row.eventNumber))
