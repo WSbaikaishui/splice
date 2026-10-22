@@ -83,11 +83,11 @@ object DarResourcesUtil extends NamedLogging {
       enableUnsupportedDarsUnvetting: Boolean,
       latestPackagesOnly: Boolean,
       additionalPackageIdsToUnvet: Map[PackageName, Set[PackageVersion]],
-      packageConfigMap: Map[PackageName, PackageVersion],
+      packageConfigMaps: Seq[Map[PackageName, PackageVersion]],
   )(implicit tc: TraceContext): Seq[DarResource] = {
     val allSupportedVersionsPackageIds =
       corePackageResources
-        .flatMap { pkg =>
+        .flatMap { pkg => packageConfigMaps.flatMap { packageConfigMap =>
           val versionFromAmuletRules = packageConfigMap.getOrElse(
             pkg.latest.metadata.name,
             pkg.latest.metadata.version,
@@ -99,8 +99,7 @@ object DarResourcesUtil extends NamedLogging {
             latestPackagesOnly,
             additionalPackageIdsToUnvet,
           )
-        }
-        .map(_.packageId)
+        }}.map(_.packageId).toSet
     vettedPackageIds
       .filterNot(allSupportedVersionsPackageIds.contains(_))
       .flatMap(pkg => pkgIdToDarResource.get(pkg))
