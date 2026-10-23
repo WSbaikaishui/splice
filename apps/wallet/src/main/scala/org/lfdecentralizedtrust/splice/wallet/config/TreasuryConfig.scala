@@ -3,7 +3,7 @@
 
 package org.lfdecentralizedtrust.splice.wallet.config
 
-import com.digitalasset.canton.config.NonNegativeFiniteDuration
+import com.digitalasset.canton.config.{NonNegativeFiniteDuration, PositiveFiniteDuration}
 
 /** Config for the treasury service for executing amulet-balance-manipulating operations
   *
@@ -31,4 +31,12 @@ case class TreasuryConfig(
       * TODO(DACH-NY/canton-network-node#11501) block and unblock submissions on domain reconnect
       */
     grpcDeadline: Option[NonNegativeFiniteDuration] = None,
+
+    /** How long to wait for the wallet ACS store to ingest a submitted batch.
+      *
+      * Ingestion waits otherwise complete only on ingest or shutdown. A stalled ingest
+      * blocks the single-threaded treasury queue (and CollectRewards) until process restart.
+      * On timeout the operation fails with a transient error and automation retries.
+      */
+    ingestionTimeout: PositiveFiniteDuration = PositiveFiniteDuration.ofMinutes(2),
 )

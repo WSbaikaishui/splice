@@ -114,6 +114,8 @@ import org.lfdecentralizedtrust.splice.codegen.java.splice.api.token.{
 
 import java.time.{Duration, Instant}
 import java.util.Optional
+import java.util.concurrent.TimeoutException
+import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.jdk.CollectionConverters.*
 import scala.jdk.OptionConverters.*
@@ -850,7 +852,7 @@ class TreasuryService(
             .recoveringAcceptedDuplicates(dedup.recoverAcceptedDuplicates)
             .yieldResultAndOffset()
       }
-      _ <- userStore.signalWhenIngestedOrShutdown(offset)
+      _ <- awaitStoreIngestion(offset)
     } yield {
       operation.outcomePromise.success(result.exerciseResult)
       Done
@@ -889,9 +891,23 @@ class TreasuryService(
       // TODO(tech-debt): remove this fragility of depending on the exact daml transaction to determine whether to wait or not
       Future.unit
     } else {
-      logger.debug(show"Waiting for store to ingest offset ${offset}")
-      userStore.signalWhenIngestedOrShutdown(offset)
+      awaitStoreIngestion(offset)
     }
+
+  /** `signalWhenIngestedOrShutdown` completes on ingest or shutdown only. Bound the wait so a
+    * stalled ACS (for example a transient participant INDEX_DB error) cannot pin the treasury
+    * queue, and therefore CollectRewards, until the process is restarted.
+    */
+  private def awaitStoreIngestion(offset: Long)(implicit tc: TraceContext): Future[Unit] = {
+    logger.debug(show"Waiting for store to ingest offset ${offset}")
+    TreasuryService.awaitIngestionOrTimeout(
+      userStore.signalWhenIngestedOrShutdown(offset),
+      treasuryConfig.ingestionTimeout.underlying,
+      mat,
+      offset,
+      logger,
+    )
+  }
 
   private def shouldMergeOnlyTransferRun(
       totalRewardsQuantity: BigDecimal,
@@ -1319,6 +1335,38 @@ class TreasuryService(
 }
 
 object TreasuryService {
+
+  /** Complete when `ingested` does, or fail with [[TimeoutException]] after `timeout`.
+    *
+    * The timer is cancelled once `ingested` completes so a late firing does not log a stall
+    * for a wait that already finished. [[TimeoutException]] is a transient error, so
+    * CollectRewards / PollingTrigger retry instead of staying blocked.
+    */
+  private[treasury] def awaitIngestionOrTimeout(
+      ingested: Future[Unit],
+      timeout: FiniteDuration,
+      materializer: Materializer,
+      offset: Long,
+      logger: TracedLogger,
+  )(implicit ec: ExecutionContext, tc: TraceContext): Future[Unit] = {
+    val timeoutP = Promise[Unit]()
+    val message =
+      s"Timed out after $timeout waiting for wallet store ingestion of offset $offset. " +
+        "The submission was accepted; failing so treasury processing can retry."
+    val cancellable = materializer.scheduleOnce(
+      timeout,
+      () =>
+        if (!ingested.isCompleted) {
+          logger.warn(message)
+          val _ = timeoutP.tryFailure(new TimeoutException(message))
+        },
+    )
+    val result = Future.firstCompletedOf(Seq(ingested, timeoutP.future))
+    result.onComplete { _ =>
+      val _ = cancellable.cancel()
+    }
+    result
+  }
 
   private sealed trait OperationBatch
 

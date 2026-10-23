@@ -33,6 +33,12 @@
 
   - Validator app
 
+     - Wallet treasury operations no longer wait indefinitely for ACS ingestion. If the wallet
+       store does not ingest a submission within
+       `canton.validator-apps.<validator>.treasury.ingestion-timeout` (default 2 minutes), the
+       operation fails and automation retries. This lets reward collection continue after a
+       participant ingestion stall instead of requiring a validator-app restart.
+
      - Add `/v1/scan-proxy/dso`, which serves the DSO information from Scan's `/v1/dso`.
        `/v0/scan-proxy/dso` is deprecated: it fails when the validator is connected to more than one Scan
        instance, as the `sv_user` and `sv_party_id` fields differ between Scan instances.
